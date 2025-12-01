@@ -116,6 +116,11 @@
                 <p class="text-sm text-gray-600 mt-1">e.g., `0 0 * * *` for daily at midnight, `*/5 * * * *` for every 5 minutes.</p>
                 <p class="text-sm text-gray-600 mt-1">Refer to <a href="https://crontab.guru/" target="_blank" class="text-blue-500 hover:underline">crontab.guru</a> for help with schedules.</p>
             </div>
+            <div class="form-group">
+                <label for="webhookHeaders">Custom Headers (optional):</label>
+                <textarea id="webhookHeaders" placeholder='{"Authorization": "Bearer your-token"}' class="border p-2 w-full font-mono text-sm" rows="2"></textarea>
+                <p class="text-sm text-gray-600 mt-1">JSON format, e.g., <code>{"Authorization": "Bearer xyz"}</code></p>
+            </div>
             <button id="addWebhookButton" class="main-action-button text-white font-bold py-2 px-4 rounded w-full">Add Webhook</button>
         </div>
 
@@ -164,6 +169,11 @@
                 <label for="editWebhookSchedule">Cron Schedule (UTC):</label>
                 <input type="text" id="editWebhookSchedule" class="border p-2 w-full">
             </div>
+            <div class="form-group">
+                <label for="editWebhookHeaders">Custom Headers (optional):</label>
+                <textarea id="editWebhookHeaders" placeholder='{"Authorization": "Bearer your-token"}' class="border p-2 w-full font-mono text-sm" rows="2"></textarea>
+                <p class="text-sm text-gray-600 mt-1">JSON format. Leave empty for no headers.</p>
+            </div>
             <div class="button-group mt-4">
                 <button id="updateWebhookButton" class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded w-full">Update Webhook</button>
                 <button id="cancelModalEditButton" class="bg-gray-500 hover:bg-gray-700 text-white font-bold py-2 px-4 rounded w-full">Cancel</button>
@@ -176,6 +186,7 @@
         const webhookNameInput = document.getElementById('webhookName');
         const webhookUrlInput = document.getElementById('webhookUrl');
         const webhookScheduleInput = document.getElementById('webhookSchedule');
+        const webhookHeadersInput = document.getElementById('webhookHeaders');
         const addWebhookButton = document.getElementById('addWebhookButton');
         let currentHooksData = []; // Store fetched hooks to easily find for editing
 
@@ -186,6 +197,7 @@
         const editWebhookNameInput = document.getElementById('editWebhookName');
         const editWebhookUrlInput = document.getElementById('editWebhookUrl');
         const editWebhookScheduleInput = document.getElementById('editWebhookSchedule');
+        const editWebhookHeadersInput = document.getElementById('editWebhookHeaders');
         const updateWebhookButton = document.getElementById('updateWebhookButton');
         const cancelModalEditButton = document.getElementById('cancelModalEditButton');
 
@@ -201,6 +213,7 @@
             webhookNameInput.value = '';
             webhookUrlInput.value = '';
             webhookScheduleInput.value = '0 0 * * *'; // Reset to default cron
+            webhookHeadersInput.value = '';
         }
 
         function showEditModal(hook) {
@@ -208,6 +221,8 @@
             editWebhookNameInput.value = hook.name;
             editWebhookUrlInput.value = hook.url;
             editWebhookScheduleInput.value = hook.schedule;
+            // Show headers as JSON if they exist, otherwise empty
+            editWebhookHeadersInput.value = hook.headers ? JSON.stringify(hook.headers, null, 2) : '';
             editWebhookModal.classList.remove('hidden');
         }
 
@@ -218,6 +233,7 @@
             editWebhookNameInput.value = '';
             editWebhookUrlInput.value = '';
             editWebhookScheduleInput.value = '';
+            editWebhookHeadersInput.value = '';
         }
 
         async function fetchHooks() {
@@ -240,15 +256,17 @@
                 hooks.forEach(hook => {
                     const hookItem = document.createElement('div');
                     hookItem.className = 'hook-item';
+                    const hasHeaders = hook.headers && Object.keys(hook.headers).length > 0;
+                    const headersBadge = hasHeaders ? '<span class="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded ml-2">+ Headers</span>' : '';
                     hookItem.innerHTML = `
                         <div>
-                            <p class="font-semibold">${hook.name}</p>
+                            <p class="font-semibold">${hook.name}${headersBadge}</p>
                             <p class="text-sm text-gray-700 break-words">${hook.url}</p>
                             <p class="text-sm text-gray-500">Schedule: ${hook.schedule}</p>
                             <p class="text-xs text-gray-400">ID: ${hook.id}</p>
                         </div>
                         <div class="button-group">
-                            <button class="run-button bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-3 rounded" data-url="${hook.url}">Run</button>
+                            <button class="run-button bg-green-500 hover:bg-green-700 text-white font-bold py-1 px-3 rounded" data-url="${hook.url}" data-id="${hook.id}">Run</button>
                             <button class="edit-button bg-blue-500 hover:bg-blue-700 text-white font-bold py-1 px-3 rounded" data-id="${hook.id}">Edit</button>
                             <button class="delete-button bg-red-500 hover:bg-red-700 text-white font-bold py-1 px-3 rounded" data-id="${hook.id}">Delete</button>
                         </div>
@@ -260,15 +278,19 @@
                 document.querySelectorAll('.run-button').forEach(button => {
                     button.addEventListener('click', async (event) => {
                         const urlToRun = event.target.dataset.url;
-                        const hookId = event.target.dataset.id; // Not used for direct fetch, but could be useful for logging
+                        const hookId = event.target.dataset.id;
+                        const hookToRun = currentHooksData.find(h => h.id === hookId);
                         if (confirm(`Are you sure you want to run this webhook immediately?\nURL: ${urlToRun}`)) {
                             try {
+                                // Merge custom headers with Content-Type
+                                const fetchHeaders = {
+                                    'Content-Type': 'application/json',
+                                    ...(hookToRun?.headers || {})
+                                };
                                 const response = await fetch(urlToRun, {
                                     method: 'POST',
-                                    headers: {
-                                        'Content-Type': 'application/json',
-                                    },
-                                    body: JSON.stringify({ triggeredBy: 'manual_run_button', hookId: hookId || 'unknown' }), // Provide a small payload
+                                    headers: fetchHeaders,
+                                    body: JSON.stringify({ triggeredBy: 'manual_run_button', hookId: hookId || 'unknown' }),
                                 });
 
                                 if (response.ok) {
@@ -330,19 +352,37 @@
             const name = webhookNameInput.value.trim();
             const url = webhookUrlInput.value.trim();
             const schedule = webhookScheduleInput.value.trim();
+            const headersText = webhookHeadersInput.value.trim();
 
             if (!name || !url || !schedule) {
-                showMessage('Please fill in all fields.', 'error');
+                showMessage('Please fill in all required fields.', 'error');
                 return;
             }
 
+            // Parse headers if provided
+            let headers = undefined;
+            if (headersText) {
+                try {
+                    headers = JSON.parse(headersText);
+                    if (typeof headers !== 'object' || Array.isArray(headers)) {
+                        throw new Error('Headers must be a JSON object');
+                    }
+                } catch (e) {
+                    showMessage(`Invalid headers JSON: ${e.message}`, 'error');
+                    return;
+                }
+            }
+
             try {
+                const payload = { name, url, schedule };
+                if (headers) payload.headers = headers;
+
                 const response = await fetch('/hooks', {
                     method: 'POST',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ name, url, schedule }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (response.status === 201) {
@@ -365,19 +405,42 @@
             const name = editWebhookNameInput.value.trim();
             const url = editWebhookUrlInput.value.trim();
             const schedule = editWebhookScheduleInput.value.trim();
+            const headersText = editWebhookHeadersInput.value.trim();
 
             if (!name || !url || !schedule) {
-                showMessage('Please fill in all fields in the modal.', 'error');
+                showMessage('Please fill in all required fields in the modal.', 'error');
                 return;
             }
 
+            // Parse headers if provided
+            let headers = undefined;
+            if (headersText) {
+                try {
+                    headers = JSON.parse(headersText);
+                    if (typeof headers !== 'object' || Array.isArray(headers)) {
+                        throw new Error('Headers must be a JSON object');
+                    }
+                } catch (e) {
+                    showMessage(`Invalid headers JSON: ${e.message}`, 'error');
+                    return;
+                }
+            }
+
             try {
+                const payload = { name, url, schedule };
+                // Include headers even if empty (to allow clearing headers)
+                if (headers) {
+                    payload.headers = headers;
+                } else {
+                    payload.headers = {}; // Clear headers if empty
+                }
+
                 const response = await fetch(`/hooks/${id}`, {
                     method: 'PUT',
                     headers: {
                         'Content-Type': 'application/json',
                     },
-                    body: JSON.stringify({ name, url, schedule }),
+                    body: JSON.stringify(payload),
                 });
 
                 if (response.ok) {

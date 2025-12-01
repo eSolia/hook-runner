@@ -9,6 +9,7 @@ interface Webhook {
   name: string;
   url: string;
   schedule: string; // Cron schedule string
+  headers?: Record<string, string>; // Optional custom headers (e.g., Authorization)
   createdAt: string;
 }
 
@@ -64,7 +65,7 @@ Deno.cron("webhook-kv-scheduler", "* * * * *", async () => { // Runs every minut
 
         if (!hasTriggeredThisMinute) {
           console.log(`[webhook-kv-scheduler] Triggering scheduled webhook: ${hook.name} (ID: ${hook.id}) due at ${nextFromMinuteAgo.toISOString()}`);
-          await pingWebhook(hook.url, hook.name);
+          await pingWebhook(hook.url, hook.name, hook.headers);
           await kv.set(lastTriggeredKey, now.toISOString()); // Mark as triggered now (in UTC)
         } else {
           console.log(`[webhook-kv-scheduler] Webhook ${hook.name} (ID: ${hook.id}) already triggered this minute.`);
@@ -100,16 +101,24 @@ if (!DD_PROJECT_ID || !DD_ACCESS_TOKEN) {
 
 
 // --- Generic Webhook Pinger Function ---
-async function pingWebhook(webhookUrl: string, name: string) {
+async function pingWebhook(webhookUrl: string, name: string, headers?: Record<string, string>) {
   if (!webhookUrl) {
     console.warn(`Skipping webhook "${name}": URL not provided.`);
     return;
   }
   console.log(`Attempting to ping webhook: "${name}" at ${new Date().toISOString()}`);
   try {
-    const response = await fetch(webhookUrl, {
+    const fetchOptions: RequestInit = {
       method: 'POST',
-    });
+    };
+
+    // Add custom headers if provided
+    if (headers && Object.keys(headers).length > 0) {
+      fetchOptions.headers = headers;
+      console.log(`  with custom headers: ${Object.keys(headers).join(', ')}`);
+    }
+
+    const response = await fetch(webhookUrl, fetchOptions);
 
     if (response.ok) {
       console.log(`Successfully pinged "${name}" webhook. Status: ${response.status}`);
@@ -294,6 +303,11 @@ async function updateWebhook(id: string, updatedData: Partial<Webhook>): Promise
         createdAt: currentHook.createdAt,
     };
 
+    // Handle headers: if empty object was passed, remove headers entirely
+    if (updatedData.headers && Object.keys(updatedData.headers).length === 0) {
+        delete newHook.headers;
+    }
+
     await kv.set(key, newHook);
     return newHook;
 }
@@ -338,7 +352,7 @@ async function handler(req: Request): Promise<Response> {
   if (url.pathname === "/hooks" && req.method === "POST") {
     try {
       const data = await req.json();
-      const { name, url, schedule } = data;
+      const { name, url, schedule, headers } = data;
 
       if (!name || !url || !schedule) {
         return new Response("Missing required fields: name, url, schedule", { status: 400 });
@@ -352,6 +366,11 @@ async function handler(req: Request): Promise<Response> {
         schedule: String(schedule),
         createdAt: new Date().toISOString(),
       };
+
+      // Add optional headers if provided
+      if (headers && typeof headers === 'object' && Object.keys(headers).length > 0) {
+        newHook.headers = headers as Record<string, string>;
+      }
 
       await kv.set(["webhooks", id], newHook);
 
